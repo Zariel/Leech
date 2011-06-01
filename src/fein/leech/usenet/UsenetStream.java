@@ -5,6 +5,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
@@ -12,31 +13,33 @@ import java.net.Socket;
 public class UsenetStream {
 	private Socket socket;
 	private OutputStreamWriter out;
-	private InputStreamReader in;
+	private InputStream in;
 	private String current_group;
 	public static String CRLF = new String(new char[]{ 0xd, 0xa });
-	
+
 	public UsenetStream(String host, int port) throws IOException, Exception {
 		socket = new Socket(host, port);
 		out = new OutputStreamWriter(new BufferedOutputStream(socket.getOutputStream()), "US-ASCII");
 		//out = new OutputStreamWriter(new BufferedOutputStream(new FileOutputStream("C:\\out.txt")), "US-ASCII");
-		in = new InputStreamReader(socket.getInputStream(), "US-ASCII");
-		
-		String buf = read(128);
-		
+		in = socket.getInputStream();
+
+		byte[] buf = read();
+
+		/*
 		if(parse_code(buf) != 200) {
 			throw new Exception();
 		}
-		
-		System.out.println(buf);		
+		*/
+
+		System.out.println(new String(buf, "US-ASCII"));		
 	}
-	
+
 	public void close() throws IOException {
 		out.close();
 		in.close();
 		socket.close();
 	}
-	
+
 	protected void finalize() throws Throwable {
 		try {
 			close();
@@ -44,10 +47,10 @@ public class UsenetStream {
 			super.finalize();
 		}
 	}
-	
+
 	public int send(String data) {
 		System.out.println("> " + data);
-		
+
 		try {
 			out.write(data + CRLF, 0, data.length() + CRLF.length());
 			out.flush();
@@ -56,14 +59,76 @@ public class UsenetStream {
 			e.printStackTrace();
 			return -1;
 		}
-		
+
 		return 0;
 	}
 	
-	public String read(int size) {
-		char[] buf = new char[size];
+	public byte[] read() throws IOException {
+		/* The max a single response can be is 512 bytes, but multi lines can go over this */
+		int size = 512;
 		int len = 0;
+				
+		byte[] recv = new byte[size];
+
+		try {
+			len = in.read(recv, 0, size);
+		} catch (IOException e) {
+			e.printStackTrace();
+			return null;
+		}
 		
+		int available = in.available();
+		
+		/* Multi line */
+		if(available > 0) {			
+			byte[] new_buffer = new byte[len + available];
+			System.arraycopy(recv, 0, new_buffer, 0, len);
+			
+			try {
+				in.read(new_buffer, len, available);
+			} catch (IOException e) {
+				e.printStackTrace();
+				return null;
+			}
+			
+			recv = new_buffer;
+			len += available;
+		}
+		
+		byte[] buffer = new byte[len];
+		
+		int i = 0;
+		int j = 0;
+		
+		boolean multi = false;
+		
+		while(i < len - 1) {
+			if(recv[i] == 0xd && recv[i + 1] == 0xa) {
+				buffer[j++] = 0xa;
+				
+				if(i < len - 4 && recv[i + 2] == 0x2e && recv[i + 3] == 0xd && recv[i + 4] == 0xa) {
+					multi = true;
+					break;
+				}
+				
+				i += 2;
+				
+			} else {
+				buffer[j++] = recv[i++];
+			}
+		}
+		
+		byte[] _buf = new byte[j];
+		
+		System.arraycopy(buffer, 0, _buf, 0, j);
+			
+		return _buf;
+	}
+/*
+	public byte[] read(int size) {
+		byte[] buf = new byte[size];
+		int len = 0;
+
 		try {
 			len = in.read(buf, 0, size);
 		} catch (IOException e) {
@@ -75,68 +140,42 @@ public class UsenetStream {
 			return null;
 		}
 		
-		StringBuilder retB = new StringBuilder();
-		
-		int i = 2;
-		int offset = 0;
-		while(i < len) {
-			if(buf[i - 1] == 0xd && buf[i] == 0xa) {
-				retB.append(buf, offset, i - 1 - offset);
-				retB.append('\n');
-				offset = i + 1;
-				
-				if(i < len + 3) {
-					if(buf[i + 1] == '.' && buf[i + 2] == 0xd && buf[i + 3] == 0xa) {
-						break;
-					}
-				}
-			}
-			
-			i++;
-		}
-		
-		retB.deleteCharAt(retB.length() - 1);
-		
-		/*
-		char ret[] = new char[i + 1];
-		while(i > -1) {
-			ret[i] = buf[i];
-			i--;
-		}
-		*/
-		
-		//TODO: if we dont find CRLF then the string hasnt finished sending so we must read more.
+		byte[] buffer = new byte[len + 1];
 
-		return retB.toString();
-	}
-	
-	public char[] read() {
-		int err = 0;
-		char[] buf = new char[1024];
+		int j = 0;
+		int i = 0;
 		
-		try {
-			err = in.read(buf, 0, 1024);
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+		while(i + 1 < len) {
+			if(buf[i] == 0xd && buf[i + 1] == 0xa) {
+				i += 2;
+				buffer[j++] = 0xa;
+			} else {
+				buffer[j++] = buf[i++];
+			}
 		}
 		
-		return buf;
-	}
-	
-	/* TODO: Use byte[], which should be faster ? */
-	
-	public int parse_code(String data) {
-		String code = data.substring(0, 3);
+		buffer[j + 1] = 0x0;
 		
-		// Dirty way of doing it
-		return Integer.parseInt(code);
+		return buffer;
 	}
+/*
+	/* TODO: Use byte[], which should be faster ? */
+/*
+	public int parse_code(byte[] bs) {
+		char[] array = new char[3];
+		for(int i = 0; i < 3; i++) {
+			array[i] = bs[i];
+		}
+
+		// Dirty way of doing it
+		return Integer.parseInt(new String(array));
+	}
+	*/
 
 	public int quit() {
 		send("QUIT");
-		int ret = parse_code(read(128));
-		return ret;
+		//int ret = parse_code(read(128));
+		return 0;
 	}
 
 	public int article(int id) {

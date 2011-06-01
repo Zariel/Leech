@@ -34,12 +34,10 @@ public class Downloader implements Callable<String> {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 			return null;
-		}
-		
-		
+		}		
 		
 		usenet.send("HELP");
-		String read = usenet.read(512);
+		String read = new String(usenet.read(), "US-ASCII");
 		
 		return read;
 	}
